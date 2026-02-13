@@ -1,0 +1,47 @@
+version: 1.3.3
+cache: true
+
+interface:
+  # agents: boolean toggles the 'use' permission; create/share/public are managed via admin panel
+  agents: true
+  mcpServers:
+    use: true
+    create: false
+    share: false
+    public: false
+
+registration:
+  socialLogins: ['openid']
+
+mcpSettings:
+  # Allow internal Docker MCP servers (SSRF protection is strict when configured)
+  allowedDomains:
+    - 'abap-mcp'
+    - 'sap-docs-mcp'
+    - 'vsp-mcp'
+
+mcpServers:
+  abap-community-docs:
+    type: streamable-http
+    url: 'http://abap-mcp:3122/mcp'
+    chatMenu: true
+    startup: true
+
+  sap-docs:
+    type: streamable-http
+    url: 'http://sap-docs-mcp:3122/mcp'
+    chatMenu: true
+    startup: true
+
+  sap-dev-adt:
+    type: streamable-http
+    url: 'http://vsp-mcp:3000/mcp'
+    chatMenu: true
+    startup: true
+
+fileConfig:
+  serverFileSizeLimit: 25
+
+endpoints:
+  agents:
+    disableBuilder: true
