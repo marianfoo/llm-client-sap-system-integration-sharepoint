@@ -1,5 +1,6 @@
 const { Keyv } = require('keyv');
 const { Time, CacheKeys, ViolationTypes } = require('librechat-data-provider');
+const { DEFAULT_REFRESH_TOKEN_EXPIRY } = require('@librechat/data-schemas');
 const {
   logFile,
   keyvMongo,
@@ -7,7 +8,28 @@ const {
   sessionCache,
   standardCache,
   violationCache,
+  math,
 } = require('@librechat/api');
+
+/**
+ * Auth sessions (OpenID/SAML) should live at least as long as refresh tokens.
+ * Otherwise, OpenID token reuse (server-side tokens in express-session) causes
+ * frequent logouts even though the refresh token is still valid.
+ *
+ * `sessionCache()` expects TTL in seconds.
+ * `REFRESH_TOKEN_EXPIRY` is configured in milliseconds (and can be an expression).
+ */
+function getAuthSessionTtlSeconds() {
+  try {
+    const ttlMs = math(process.env.REFRESH_TOKEN_EXPIRY, DEFAULT_REFRESH_TOKEN_EXPIRY);
+    return Math.ceil(ttlMs / 1000);
+  } catch {
+    // Be defensive: cache initialization must not crash the process.
+    return Math.ceil(DEFAULT_REFRESH_TOKEN_EXPIRY / 1000);
+  }
+}
+
+const authSessionTtlSeconds = getAuthSessionTtlSeconds();
 
 const namespaces = {
   [ViolationTypes.GENERAL]: new Keyv({ store: logFile, namespace: 'violations' }),
@@ -31,8 +53,8 @@ const namespaces = {
     ttl: cacheConfig.BAN_DURATION,
   }),
 
-  [CacheKeys.OPENID_SESSION]: sessionCache(CacheKeys.OPENID_SESSION),
-  [CacheKeys.SAML_SESSION]: sessionCache(CacheKeys.SAML_SESSION),
+  [CacheKeys.OPENID_SESSION]: sessionCache(CacheKeys.OPENID_SESSION, authSessionTtlSeconds),
+  [CacheKeys.SAML_SESSION]: sessionCache(CacheKeys.SAML_SESSION, authSessionTtlSeconds),
 
   [CacheKeys.ROLES]: standardCache(CacheKeys.ROLES),
   [CacheKeys.APP_CONFIG]: standardCache(CacheKeys.APP_CONFIG),
