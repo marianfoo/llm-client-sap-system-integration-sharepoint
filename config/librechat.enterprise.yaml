@@ -2,11 +2,14 @@ version: 1.3.3
 cache: true
 
 interface:
-  # agents: boolean toggles the 'use' permission; create/share/public are managed via admin panel
-  agents: true
+  agents:
+    use: true
+    create: true
+    share: false
+    public: false
   mcpServers:
     use: true
-    create: false
+    create: true
     share: false
     public: false
 
@@ -16,17 +19,10 @@ registration:
 mcpSettings:
   # Allow internal Docker MCP servers (SSRF protection is strict when configured)
   allowedDomains:
-    - 'abap-mcp'
     - 'sap-docs-mcp'
     - 'vsp-mcp'
 
 mcpServers:
-  abap-community-docs:
-    type: streamable-http
-    url: 'http://abap-mcp:3122/mcp'
-    chatMenu: true
-    startup: true
-
   sap-docs:
     type: streamable-http
     url: 'http://sap-docs-mcp:3122/mcp'
@@ -39,9 +35,29 @@ mcpServers:
     chatMenu: true
     startup: true
 
+
 fileConfig:
   serverFileSizeLimit: 25
 
 endpoints:
+  # Only Ollama is exposed by default. ENDPOINTS=custom in .env hides all
+  # cloud providers (OpenAI, Anthropic, etc.). See docs/GUIDE.md §7 to add more.
+  custom:
+    - name: "Ollama"
+      apiKey: "ollama"
+      # host.docker.internal resolves to the Mac host — works when Ollama runs natively.
+      # If Ollama runs in Docker instead, change to: http://ollama:11434/v1
+      baseURL: "http://host.docker.internal:11434/v1"
+      models:
+        # fetch: true — LibreChat queries Ollama at startup and shows only
+        # models that are actually pulled. Set fetch: false and list specific
+        # model names here to restrict which models users can choose from.
+        fetch: true
+        default: ["llama3.1:8b"]
+      titleConvo: true
+      titleModel: "current_model"
+      summarize: false
+      forcePrompt: false
+      modelDisplayLabel: "Ollama"
   agents:
-    disableBuilder: true
+    disableBuilder: false

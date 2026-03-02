@@ -27,8 +27,10 @@ RUN chmod +x /entrypoint.sh
 
 ENV MCP_PROXY_PORT=3000
 ENV VSP_MODE=focused
-ENV VSP_EXTRA_ARGS="--disabled-groups report,cts,install,git"
+# ENV VSP_EXTRA_ARGS="--disabled-groups report,cts,install,git"
 ENV VSP_EGRESS_LOCKDOWN=true
+# Block all write operations by default; override with SAP_READ_ONLY=false to allow writes
+# ENV SAP_READ_ONLY=true
 
 EXPOSE 3000
 

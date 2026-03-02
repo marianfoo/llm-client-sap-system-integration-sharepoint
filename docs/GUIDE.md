@@ -12,13 +12,14 @@ Complete setup guide — from overview to verified deployment.
 4. [Setup: Entra ID (Authentication)](#4-setup-entra-id-authentication)
 5. [Setup: SharePoint File Picker](#5-setup-sharepoint-file-picker)
 6. [Setup: SAP MCP Servers](#6-setup-sap-mcp-servers)
-7. [Configuration Files](#7-configuration-files)
-8. [Deployment](#8-deployment)
-9. [Agent Curation (Admin)](#9-agent-curation-admin)
-10. [Verification Checklist](#10-verification-checklist)
-11. [Security Posture](#11-security-posture)
-12. [Troubleshooting](#12-troubleshooting)
-13. [References](#13-references)
+7. [LLM Providers](#7-llm-providers)
+8. [Configuration Files](#8-configuration-files)
+9. [Deployment](#9-deployment)
+10. [Agent Curation (Admin)](#10-agent-curation-admin)
+11. [Verification Checklist](#11-verification-checklist)
+12. [Security Posture](#12-security-posture)
+13. [Troubleshooting](#13-troubleshooting)
+14. [References](#14-references)
 
 ---
 
@@ -51,12 +52,11 @@ The template is designed for DEV/staging environments with a clear path to produ
 
 ### SAP Integration (via MCP)
 
-Three Model Context Protocol (MCP) servers:
+Two Model Context Protocol (MCP) servers:
 
 | Server | Purpose | Chat menu |
 |--------|---------|-----------|
-| `abap-community-docs` | ABAP community documentation search | Yes |
-| `sap-docs` | Official SAP documentation search | Yes |
+| `sap-docs` | SAP documentation search (offline index, no external calls) | Yes |
 | `sap-dev-adt` (VSP) | Read-only SAP DEV system access via ADT | Agent-only |
 
 ### Governance
@@ -230,15 +230,42 @@ SAP_INSECURE=true   # DEV only — see Security section
 
 ### 6.2 MCP server architecture
 
-Three MCP servers run as Docker containers, defined in `docker-compose.override.yml` and configured in `config/librechat.enterprise.yaml`:
+Two MCP servers run as Docker containers, defined in `docker-compose.override.yml` and configured in `config/librechat.enterprise.yaml`:
 
 | Service | Container | Internal URL | Source |
 |---------|-----------|-------------|--------|
-| `abap-community-docs` | `abap-mcp` | `http://abap-mcp:3122/mcp` | `marianfoo/abap-community-docs-mcp` |
-| `sap-docs` | `sap-docs-mcp` | `http://sap-docs-mcp:3122/mcp` | `marianfoo/sap-docs-mcp` |
+| `sap-docs` | `sap-docs-mcp` | `http://sap-docs-mcp:3122/mcp` | `marianfoo/mcp-sap-docs` |
 | `sap-dev-adt` | `vsp-mcp` | `http://vsp-mcp:3000/mcp` | `oisee/vibing-steampunk` via `mcp-proxy` |
 
 Images are built from local Dockerfiles under `docker/`.
+
+#### `sap-docs` offline mode
+
+The `sap-docs` server ships an embedded full-text index (built during the Docker image build via `npm run setup && npm run build`). In offline mode, searches run entirely against that local index — no outbound calls to SAP Help Portal, SAP Community, or Software Heroes are made.
+
+**Configuration:**
+
+- **Build arg** `SAP_DOCS_OFFLINE_MODE` (default: `true`): When `true`, the Dockerfile patches the compiled output to flip the in-code `includeOnline` default from `true` to `false`. Set to `false` to enable online sources by default.
+- **Env var** `MCP_INCLUDE_ONLINE_DEFAULT=false`: Forward-compatible signal; when the upstream (`marianfoo/mcp-sap-docs`) adds native env-var support for this default, the Dockerfile patch can be removed and the env var alone will be sufficient.
+- **Per-request override**: Online sources can still be reached by passing `includeOnline: true` explicitly in a `search` call.
+
+**Toggle offline mode:** Set `SAP_DOCS_OFFLINE_MODE=false` in `.env` before building, then rebuild the image:
+
+```bash
+SAP_DOCS_OFFLINE_MODE=false docker compose build sap-docs-mcp
+```
+
+**Air-gapped deployment:** For strict air-gapped execution, run the container with network disabled. Port mapping still allows the host to reach the MCP endpoint:
+
+```bash
+docker run --rm --network none -p 3122:3122 \
+  -e MCP_VARIANT=sap-docs \
+  -e MCP_PORT=3122 \
+  -e MCP_HOST=0.0.0.0 \
+  mcp-sap-docs
+```
+
+Startup may log warnings for online prefetch attempts (e.g. ABAP feature matrix); this does not prevent offline `search` usage.
 
 ### 6.3 MCP governance
 
@@ -253,7 +280,6 @@ interface:
 
 mcpSettings:
   allowedDomains:   # SSRF protection — only these internal hosts allowed
-    - 'abap-mcp'
     - 'sap-docs-mcp'
     - 'vsp-mcp'
 ```
@@ -279,7 +305,135 @@ The `vsp-mcp` container runs with `NET_ADMIN` capability and applies iptables OU
 
 ---
 
-## 7. Configuration Files
+## 7. LLM Providers
+
+This template ships **Ollama** as the default and only LLM provider. Ollama runs entirely inside Docker — no cloud API keys required.
+
+### 7.1 How it works
+
+The `ENDPOINTS=custom` variable in `.env` hides all cloud providers (OpenAI, Anthropic, Azure, etc.) from the UI. Only the Ollama endpoint defined in `config/librechat.enterprise.yaml` is shown.
+
+At startup, LibreChat queries Ollama's API and populates the model picker with **only the models that are currently pulled** (`fetch: true`). The list updates automatically whenever you add or remove models from Ollama.
+
+**Ollama runs natively on the host machine** (not in Docker). The LibreChat container reaches it via `host.docker.internal:11434`, which Docker resolves to the host's loopback address on macOS and Linux.
+
+### 7.2 Managing Ollama models
+
+[Install Ollama](https://ollama.com/download) on your host machine, then pull models with:
+
+```bash
+ollama pull llama3.1:8b
+ollama pull mistral
+```
+
+List currently available models:
+
+```bash
+ollama list
+```
+
+Remove a model to free disk space:
+
+```bash
+ollama rm mistral
+```
+
+### 7.3 Restricting which models users can choose from
+
+By default all pulled models appear in the picker. To show only specific models, set `fetch: false` in `config/librechat.enterprise.yaml` and list exactly the models you want:
+
+```yaml
+# config/librechat.enterprise.yaml
+endpoints:
+  custom:
+    - name: "Ollama"
+      apiKey: "ollama"
+      baseURL: "http://ollama:11434/v1"
+      models:
+        fetch: false                        # disable dynamic discovery
+        default: ["llama3.1:8b"]           # only this model is offered
+```
+
+Users will only see `llama3.1:8b` in the picker regardless of what else is pulled on the server. Restart the API container after changing this file: `docker compose restart api`.
+
+### 7.4 Adding cloud providers (e.g. OpenAI GPT-5)
+
+**Step 1** — Add the API key to `.env`:
+
+```env
+OPENAI_API_KEY=sk-...
+```
+
+**Step 2** — Add the provider to `ENDPOINTS` in `.env`:
+
+```env
+# Ollama + OpenAI
+ENDPOINTS=openAI,custom
+
+# Ollama + OpenAI + Anthropic
+ENDPOINTS=openAI,anthropic,custom
+```
+
+Available endpoint identifiers: `openAI`, `assistants`, `azureOpenAI`, `google`, `anthropic`, `custom`, `agents`.
+
+**Step 3 (optional)** — Pin specific models in `config/librechat.enterprise.yaml` to prevent users from accessing models you haven't approved:
+
+```yaml
+endpoints:
+  openAI:
+    models:
+      fetch: false
+      default: ["gpt-5", "gpt-4o", "gpt-4o-mini"]
+  custom:
+    - name: "Ollama"
+      apiKey: "ollama"
+      baseURL: "http://ollama:11434/v1"
+      models:
+        fetch: true
+        default: ["llama3.1:8b"]
+```
+
+If you omit the `openAI` block entirely, LibreChat fetches the full model list from the OpenAI API and all available models are shown.
+
+### 7.5 Running Ollama in Docker instead
+
+If you prefer to run Ollama as a Docker container (e.g. on a Linux server), add the following service to `docker-compose.override.yml` and change the `baseURL` in `config/librechat.enterprise.yaml`:
+
+```yaml
+# docker-compose.override.yml — add under services:
+  ollama:
+    container_name: ollama
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    # NVIDIA GPU acceleration (requires nvidia-container-toolkit on the host)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+```
+
+```yaml
+# config/librechat.enterprise.yaml — change baseURL to the container hostname:
+      baseURL: "http://ollama:11434/v1"
+```
+
+Also add `ollama` to the `api` service's `depends_on` list and pull models via:
+
+```bash
+docker exec ollama ollama pull llama3.1:8b
+```
+
+---
+
+## 8. Configuration Files
 
 | File | Purpose | Edit directly? |
 |------|---------|---------------|
@@ -303,7 +457,7 @@ Docker Compose automatically merges `docker-compose.yml` + `docker-compose.overr
 
 1. **Local build of the `api` image** — required for auth bug fixes (see [Code Changes](#code-changes-to-upstream-librechat))
 2. **Config file mount** — `config/librechat.enterprise.yaml` → `/app/librechat.yaml`
-3. **MCP service dependencies and definitions** — three SAP MCP containers
+3. **MCP service dependencies and definitions** — two SAP MCP containers
 
 ### `librechat.enterprise.yaml` overview
 
@@ -312,48 +466,57 @@ version: 1.3.3
 cache: true
 
 interface:
-  agents: true
+  agents:
+    use: true
+    create: true    # enables Agent Builder for all users
+    share: false
+    public: false
   mcpServers:
     use: true
-    create: false
-    share: false
+    create: true    # users can add MCP servers in chat menu
+    share: false    # users cannot share MCP configs
+    public: false
 
 registration:
   socialLogins: ['openid']
 
 mcpSettings:
-  allowedDomains:
-    - 'abap-mcp'
+  allowedDomains:   # SSRF protection — only these internal hosts allowed
     - 'sap-docs-mcp'
     - 'vsp-mcp'
 
 mcpServers:
-  abap-community-docs:
-    type: streamable-http
-    url: 'http://abap-mcp:3122/mcp'
-    chatMenu: true
   sap-docs:
     type: streamable-http
     url: 'http://sap-docs-mcp:3122/mcp'
     chatMenu: true
+    startup: true   # connect at API startup, not on first user request
   sap-dev-adt:
     type: streamable-http
     url: 'http://vsp-mcp:3000/mcp'
     chatMenu: true
+    startup: true
 
 fileConfig:
   serverFileSizeLimit: 25
 
 endpoints:
+  custom:
+    - name: "Ollama"
+      apiKey: "ollama"
+      baseURL: "http://host.docker.internal:11434/v1"
+      models:
+        fetch: true
+        default: ["llama3.1:8b"]
   agents:
-    disableBuilder: true
+    disableBuilder: false   # set to true after curating agents (see §10)
 ```
 
 ---
 
-## 8. Deployment
+## 9. Deployment
 
-### 8.1 Clone and configure
+### 9.1 Clone and configure
 
 ```bash
 git clone <this-repo-url>
@@ -374,7 +537,7 @@ openssl rand -hex 32   # JWT_REFRESH_SECRET
 openssl rand -hex 32   # OPENID_SESSION_SECRET
 ```
 
-### 8.2 Build and start
+### 9.2 Build and start
 
 ```bash
 docker compose up -d --build
@@ -382,7 +545,7 @@ docker compose up -d --build
 
 This reads `docker-compose.yml` + auto-merges `docker-compose.override.yml`, builds the `api` image locally (with auth fixes) and the MCP server images, then starts all services.
 
-### 8.3 Verify startup
+### 9.3 Verify startup
 
 ```bash
 docker compose ps              # All containers should be running
@@ -391,7 +554,7 @@ docker compose logs -f api     # Watch API logs for errors
 
 Open http://localhost:3080 and log in with Entra ID.
 
-### 8.4 Updating
+### 9.4 Updating
 
 ```bash
 docker compose down
@@ -401,13 +564,15 @@ docker compose up -d --build
 
 > Do **not** run `docker compose pull` for the `api` service — it's built locally. To pull other images: `docker compose pull mongodb meilisearch vectordb rag_api`
 
-### 8.5 Production split stack
+### 9.5 Production split stack
+
+`deploy-compose.yml` is a standalone production-oriented compose file with its own service definitions. Use it in place of `docker-compose.yml` + `docker-compose.override.yml`:
 
 ```bash
-docker compose -f deploy-compose.yml -f docker-compose.override.yml up -d --build
+docker compose -f deploy-compose.yml up -d --build
 ```
 
-### 8.6 Common commands
+### 9.6 Common commands
 
 | Command | Purpose |
 |---------|---------|
@@ -422,11 +587,11 @@ docker compose -f deploy-compose.yml -f docker-compose.override.yml up -d --buil
 
 ---
 
-## 9. Agent Curation (Admin)
+## 10. Agent Curation (Admin)
 
 This template disables the agent builder for regular users. Agents are created by an admin, then the builder is re-locked.
 
-### 9.1 Temporary unlock
+### 10.1 Temporary unlock
 
 Edit `config/librechat.enterprise.yaml`:
 
@@ -440,13 +605,13 @@ endpoints:
 
 Restart the stack: `docker compose restart api`
 
-### 9.2 Create agents
+### 10.2 Create agents
 
 **Agent 1: SAP Docs**
 
 1. Open Agents panel as admin.
 2. Create agent named `SAP Docs`.
-3. Enable MCP servers: `abap-community-docs`, `sap-docs`.
+3. Enable MCP server: `sap-docs`.
 4. Save and share to required users/roles.
 
 **Agent 2: SAP DEV Read**
@@ -468,7 +633,7 @@ Restart the stack: `docker compose restart api`
 
 **Do not enable:** `RunQuery`, write/edit/import/export tools, reports, `ExecuteABAP`, transport/CTS tools, install tools, git tools, activation tools.
 
-### 9.3 Re-lock
+### 10.3 Re-lock
 
 Revert `config/librechat.enterprise.yaml`:
 
@@ -482,18 +647,17 @@ Restart the stack: `docker compose restart api`
 
 ---
 
-## 10. Verification Checklist
+## 11. Verification Checklist
 
-### 10.1 Stack health
+### 11.1 Stack health
 
 ```bash
 docker compose ps                                    # All containers running
-curl -fsS http://localhost:3123/health || true       # abap-mcp
 curl -fsS http://localhost:3124/health || true       # sap-docs-mcp
 curl -fsS http://localhost:3130/mcp || true          # vsp-mcp
 ```
 
-### 10.2 UI checks
+### 11.2 UI checks
 
 1. Login flow is Entra/OpenID only — no email/password form.
 2. User cannot create or share MCP servers.
@@ -502,7 +666,7 @@ curl -fsS http://localhost:3130/mcp || true          # vsp-mcp
 5. `SAP DEV Read` agent is present and usable.
 6. `SAP DEV Read` tools exclude `RunQuery` and write/transport/execute tools.
 
-### 10.3 SharePoint checks
+### 11.3 SharePoint checks
 
 1. **Attach** > **From SharePoint** is visible.
 2. File picker loads SharePoint content (no 404).
@@ -523,7 +687,7 @@ If SharePoint fails, check:
 | User re-logged in after changes | Log out and back in for fresh tokens |
 | API image built locally | Override uses `build: .`, not upstream `ghcr.io` image |
 
-### 10.4 Common error codes
+### 11.4 Common error codes
 
 | Error | Meaning | Fix |
 |-------|---------|-----|
@@ -535,7 +699,7 @@ If SharePoint fails, check:
 
 ---
 
-## 11. Security Posture
+## 12. Security Posture
 
 This template is a **DEV baseline**. The following controls are enforced:
 
@@ -570,7 +734,7 @@ This template is a **DEV baseline**. The following controls are enforced:
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### Docker
 
@@ -592,18 +756,17 @@ This template is a **DEV baseline**. The following controls are enforced:
 
 ### SharePoint
 
-See error code table in [section 10.4](#104-common-error-codes).
+See error code table in [section 11.4](#114-common-error-codes).
 
 ---
 
-## 13. References
+## 14. References
 
 ### This template
 
 | Document | Path |
 |----------|------|
 | Code changes vs upstream | `docs/code-changes.md` |
-| Upstream issue draft | `docs/github-issue-draft.md` |
 
 ### Official LibreChat docs
 

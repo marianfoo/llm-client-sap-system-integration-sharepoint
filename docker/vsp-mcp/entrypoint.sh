@@ -56,6 +56,11 @@ if [ "${SAP_INSECURE:-false}" = "true" ]; then
   set -- "$@" --insecure
 fi
 
+# Block all write operations by default; set SAP_READ_ONLY=false to allow writes
+if [ "${SAP_READ_ONLY:-true}" = "true" ]; then
+  set -- "$@" --read-only
+fi
+
 if [ -n "${VSP_EXTRA_ARGS:-}" ]; then
   # shellcheck disable=SC2086
   set -- "$@" ${VSP_EXTRA_ARGS}
