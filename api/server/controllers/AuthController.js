@@ -203,11 +203,14 @@ const graphTokenController = async (req, res) => {
       });
     }
 
-    // Extract access token from Authorization header
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    // Get the real Entra ID access token from federatedTokens (populated by openIdJwtStrategy
+    // from server-side session). The Bearer token in the Authorization header is the id_token
+    // used for app authentication via JWKS; the OBO flow requires the original access_token.
+    const accessToken = req.user.federatedTokens?.access_token;
+
+    if (!accessToken) {
       return res.status(401).json({
-        message: 'Valid authorization token required',
+        message: 'Entra ID access token not available — ensure OPENID_REUSE_TOKENS=true and re-login',
       });
     }
 
@@ -219,7 +222,6 @@ const graphTokenController = async (req, res) => {
       });
     }
 
-    const accessToken = authHeader.substring(7); // Remove 'Bearer ' prefix
     const tokenResponse = await getGraphApiToken(req.user, accessToken, scopes);
 
     res.json(tokenResponse);

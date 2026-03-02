@@ -1,8 +1,12 @@
 const passport = require('passport');
 const session = require('express-session');
-const { isEnabled } = require('@librechat/api');
+const { isEnabled, math } = require('@librechat/api');
 const { CacheKeys } = require('librechat-data-provider');
-const { logger, DEFAULT_SESSION_EXPIRY } = require('@librechat/data-schemas');
+const {
+  logger,
+  DEFAULT_SESSION_EXPIRY,
+  DEFAULT_REFRESH_TOKEN_EXPIRY,
+} = require('@librechat/data-schemas');
 const {
   openIdJwtLogin,
   facebookLogin,
@@ -54,14 +58,22 @@ function shouldUseSecureCookie() {
  */
 async function configureOpenId(app) {
   logger.info('Configuring OpenID Connect...');
-  const sessionExpiry = Number(process.env.SESSION_EXPIRY) || DEFAULT_SESSION_EXPIRY;
+  const sessionExpiry = math(process.env.SESSION_EXPIRY, DEFAULT_SESSION_EXPIRY);
+  const refreshTokenExpiry = math(process.env.REFRESH_TOKEN_EXPIRY, DEFAULT_REFRESH_TOKEN_EXPIRY);
+  const openidReuseTokens = isEnabled(process.env.OPENID_REUSE_TOKENS);
+  /**
+   * When OPENID_REUSE_TOKENS is enabled, refresh tokens are stored server-side in the session.
+   * The session cookie must therefore live at least as long as the refresh token expiry,
+   * otherwise users will be forced to re-authenticate frequently (e.g., after 15 minutes).
+   */
+  const openidSessionMaxAge = openidReuseTokens ? refreshTokenExpiry : sessionExpiry;
   const sessionOptions = {
     secret: process.env.OPENID_SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     store: getLogStores(CacheKeys.OPENID_SESSION),
     cookie: {
-      maxAge: sessionExpiry,
+      maxAge: openidSessionMaxAge,
       secure: shouldUseSecureCookie(),
     },
   };
@@ -74,7 +86,7 @@ async function configureOpenId(app) {
     return;
   }
 
-  if (isEnabled(process.env.OPENID_REUSE_TOKENS)) {
+  if (openidReuseTokens) {
     logger.info('OpenID token reuse is enabled.');
     passport.use('openidJwt', openIdJwtLogin(config));
   }
@@ -119,7 +131,7 @@ const configureSocialLogins = async (app) => {
     process.env.SAML_SESSION_SECRET
   ) {
     logger.info('Configuring SAML Connect...');
-    const sessionExpiry = Number(process.env.SESSION_EXPIRY) || DEFAULT_SESSION_EXPIRY;
+    const sessionExpiry = math(process.env.SESSION_EXPIRY, DEFAULT_SESSION_EXPIRY);
     const sessionOptions = {
       secret: process.env.SAML_SESSION_SECRET,
       resave: false,

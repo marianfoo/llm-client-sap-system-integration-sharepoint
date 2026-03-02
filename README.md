@@ -47,6 +47,62 @@
 </p>
 
 
+## SAP + SharePoint Enterprise Template
+
+This fork is configured as a LibreChat enterprise template for:
+
+- Entra ID (OpenID) authentication
+- Native SharePoint attachments (no SharePoint MCP)
+- SAP documentation MCP servers
+- SAP DEV read-focused MCP access via VSP
+
+### Quick Start
+
+1. Clone and configure environment:
+
+```bash
+cp .env.example .env
+```
+
+2. Edit `.env` with Entra and SAP credentials.
+
+3. Start stack:
+
+```bash
+docker compose up -d --build
+```
+
+Alternative production split stack:
+
+```bash
+docker compose -f deploy-compose.yml up -d --build
+```
+
+### Config Files Used By This Template
+
+- LibreChat config: `config/librechat.enterprise.yaml`
+- Compose stacks:
+  - `docker-compose.yml` (upstream, unmodified)
+  - `docker-compose.override.yml` (template customizations: local build, config mount, MCP services — tracked in git, removed from `.gitignore` for easier admin setup)
+  - `deploy-compose.yml` (alternative production split stack)
+
+### Documentation
+
+**Start here:** [`docs/GUIDE.md`](docs/GUIDE.md) — complete setup guide from overview to verified deployment.
+
+Detailed topic docs:
+
+- Docker deployment: `docs/deployment.md`
+- Entra ID: `docs/setup/entra.md`
+- SharePoint: `docs/setup/sharepoint.md`
+- SAP: `docs/setup/sap.md`
+- MCP: `docs/setup/mcp.md`
+- Agent curation: `docs/admin/agents.md`
+- Security: `docs/security.md`
+- Verification: `docs/verification.md`
+- Code changes vs upstream: `docs/code-changes.md`
+- Upstream issue draft: `docs/github-issue-draft.md`
+
 # ✨ Features
 
 - 🖥️ **UI & Experience** inspired by ChatGPT with enhanced design and features

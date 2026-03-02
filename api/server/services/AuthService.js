@@ -37,6 +37,37 @@ const isProduction = process.env.NODE_ENV === 'production';
 const genericVerificationMessage = 'Please check your email to verify your email address.';
 
 /**
+ * Determines if secure cookies should be used.
+ * Only use secure cookies in production when not on localhost.
+ * @returns {boolean}
+ */
+function shouldUseSecureCookie() {
+  const domainServer = process.env.DOMAIN_SERVER || '';
+
+  let hostname = '';
+  if (domainServer) {
+    try {
+      const normalized = /^https?:\/\//i.test(domainServer)
+        ? domainServer
+        : `http://${domainServer}`;
+      const url = new URL(normalized);
+      hostname = (url.hostname || '').toLowerCase();
+    } catch {
+      // Fallback: treat DOMAIN_SERVER directly as a hostname-like string
+      hostname = domainServer.toLowerCase();
+    }
+  }
+
+  const isLocalhost =
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname.endsWith('.localhost');
+
+  return isProduction && !isLocalhost;
+}
+
+/**
  * Logout user
  *
  * @param {ServerRequest} req
@@ -392,13 +423,13 @@ const setAuthTokens = async (userId, res, _session = null) => {
     res.cookie('refreshToken', refreshToken, {
       expires: new Date(refreshTokenExpires),
       httpOnly: true,
-      secure: isProduction,
+      secure: shouldUseSecureCookie(),
       sameSite: 'strict',
     });
     res.cookie('token_provider', 'librechat', {
       expires: new Date(refreshTokenExpires),
       httpOnly: true,
-      secure: isProduction,
+      secure: shouldUseSecureCookie(),
       sameSite: 'strict',
     });
     return token;
@@ -440,6 +471,7 @@ const setOpenIDAuthTokens = (tokenset, req, res, userId, existingRefreshToken) =
       logger.error('[setOpenIDAuthTokens] No access token found in tokenset');
       return;
     }
+    const appAuthToken = tokenset.id_token || tokenset.access_token;
 
     const refreshToken = tokenset.refresh_token || existingRefreshToken;
 
@@ -460,13 +492,14 @@ const setOpenIDAuthTokens = (tokenset, req, res, userId, existingRefreshToken) =
       res.cookie('refreshToken', refreshToken, {
         expires: expirationDate,
         httpOnly: true,
-        secure: isProduction,
+        secure: shouldUseSecureCookie(),
         sameSite: 'strict',
       });
-      res.cookie('openid_access_token', tokenset.access_token, {
+      // Use ID token for app auth fallback (v2 issuer/audience), fall back to access token if absent.
+      res.cookie('openid_access_token', appAuthToken, {
         expires: expirationDate,
         httpOnly: true,
-        secure: isProduction,
+        secure: shouldUseSecureCookie(),
         sameSite: 'strict',
       });
     }
@@ -475,7 +508,7 @@ const setOpenIDAuthTokens = (tokenset, req, res, userId, existingRefreshToken) =
     res.cookie('token_provider', 'openid', {
       expires: expirationDate,
       httpOnly: true,
-      secure: isProduction,
+      secure: shouldUseSecureCookie(),
       sameSite: 'strict',
     });
     if (userId && isEnabled(process.env.OPENID_REUSE_TOKENS)) {
@@ -486,11 +519,11 @@ const setOpenIDAuthTokens = (tokenset, req, res, userId, existingRefreshToken) =
       res.cookie('openid_user_id', signedUserId, {
         expires: expirationDate,
         httpOnly: true,
-        secure: isProduction,
+        secure: shouldUseSecureCookie(),
         sameSite: 'strict',
       });
     }
-    return tokenset.access_token;
+    return appAuthToken;
   } catch (error) {
     logger.error('[setOpenIDAuthTokens] Error in setting authentication tokens:', error);
     throw error;

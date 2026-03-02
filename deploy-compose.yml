@@ -11,6 +11,8 @@ services:
     depends_on:
       - mongodb
       - rag_api
+      - sap-docs-mcp
+      - vsp-mcp
     restart: always
     extra_hosts:
     - "host.docker.internal:host-gateway"
@@ -25,7 +27,7 @@ services:
       - RAG_API_URL=http://rag_api:${RAG_PORT:-8000}
     volumes:
       - type: bind
-        source: ./librechat.yaml
+        source: ./config/librechat.enterprise.yaml
         target: /app/librechat.yaml
       - ./images:/app/client/public/images
       - ./uploads:/app/uploads
@@ -83,6 +85,43 @@ services:
       - vectordb
     env_file:
       - .env
+
+  sap-docs-mcp:
+    container_name: sap-docs-mcp
+    build:
+      context: ./docker/sap-docs-mcp
+      args:
+        # Set to false to enable online sources (SAP Help, Community, Software Heroes) by default
+        - SAP_DOCS_OFFLINE_MODE=${SAP_DOCS_OFFLINE_MODE:-true}
+    environment:
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=3122
+      # Offline-only mode: online sources (SAP Help, Community, Software Heroes) are excluded
+      # from search by default. Users can still pass includeOnline=true per request to opt in.
+      - MCP_INCLUDE_ONLINE_DEFAULT=false
+    restart: unless-stopped
+    ports:
+      - 3124:3122
+
+  vsp-mcp:
+    container_name: vsp-mcp
+    build:
+      context: ./docker/vsp-mcp
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - SAP_URL=${SAP_URL}
+      - SAP_USER=${SAP_TECH_USER}
+      - SAP_PASSWORD=${SAP_TECH_PASSWORD}
+      - SAP_CLIENT=${SAP_CLIENT}
+      - SAP_INSECURE=${SAP_INSECURE}
+      - MCP_PROXY_PORT=3000
+      - VSP_MODE=focused
+      - SAP_READ_ONLY=true
+      - VSP_EXTRA_ARGS=--block-free-sql --transport-read-only --disabled-groups debugger
+    restart: unless-stopped
+    ports:
+      - 3130:3000
 
 volumes:
   pgdata2:
